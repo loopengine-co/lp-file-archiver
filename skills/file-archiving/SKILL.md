@@ -1,0 +1,61 @@
+---
+name: file-archiving
+description: When to bundle a batch of files into one zip with create_zip_archive, what it does and doesn't accept as a source, and how to handle files that fail to include.
+---
+
+# File archiving
+
+`create_zip_archive` bundles a list of files — each an http(s) URL or a
+local filesystem path — into one zip. It's built to compose with whatever
+already produced those files, not just one specific ability: the common
+case is a batch tool that just finished (e.g. an image-generation job)
+handing over its own output paths/URLs so the operator gets one
+downloadable artifact instead of picking through dozens of separate
+files or links.
+
+## When to use it
+
+Only when the operator actually wants one combined artifact — most
+requests are fine with the individual paths/URLs a batch tool already
+returned, and archiving adds a step (and, for GCS storage, another
+upload) that isn't free. Reach for it when the request says something
+like "zip these up," "give me one file I can download," or "package the
+results" — not automatically after every batch just because it's
+available.
+
+## What counts as a valid source
+
+Only `http://`/`https://` URLs and local filesystem paths — nothing
+else. A `gs://bucket/object` URI (the fallback form some GCS-backed
+tools return when their credentials can't sign a URL) is **not**
+supported here and will fail for that one entry; if the batch that
+produced it can hand back a real signed URL instead, use that. Don't
+pass in URLs a source didn't actually give you — this fetches whatever
+string you provide, so cite real output paths/URLs, not guesses.
+
+## Partial results are normal, not a failure
+
+One dead URL or missing file doesn't fail the whole archive — that
+entry is skipped and reported in the response's `results` array
+(`{ source, status: "failed", error }`), while everything else still
+gets bundled. Only every source failing is a hard error (nothing to
+archive). After calling it, report both what got archived (`file_count`,
+`archive_path`) and any entries that failed, rather than silently
+dropping the failures from what you tell the operator.
+
+## No job, no polling
+
+Unlike a slow generation job, this runs synchronously and returns once
+the archive is written — bundling files is fast compared to whatever
+produced them, so there's no `job_id` to poll here. Very large batches
+(dozens of large files) still take some real time to fetch and compress,
+but not the multi-minute scale a generation job can take.
+
+## Where the archive ends up
+
+`archive_path` in the response is where it actually landed — a local
+filesystem path by default, or (when the deployment has
+`ARCHIVE_STORAGE=gcs` set) a signed HTTPS URL, falling back to a bare
+`gs://bucket/object` URI if the configured credentials can't sign one —
+same signing-capability caveat as any GCS-backed tool: plain user
+Application Default Credentials can't sign, a service account key can.

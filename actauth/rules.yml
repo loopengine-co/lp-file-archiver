@@ -1,0 +1,14 @@
+# decision: allow, not ask — this writes a new file (locally or to a
+# GCS bucket the operator already configured), nothing destructive, and
+# costs no metered API spend the way lp-product-ad-images' generation
+# does — there's no per-call cost to gate the way there is for a real
+# image-generation call. The actual risk this tool carries is fetching
+# an arbitrary URL a model hands it (same as lp-web-search's web_fetch),
+# which fetchSource's own isBlockedHost bounds — an SSRF guard, not an
+# actauth scope, since a scope tighter than "*/*" wouldn't add anything
+# actauth itself can check for a tool whose real input is arbitrary URLs
+# and paths.
+- name: create-zip-archive-allowed
+  scope: "*/*"
+  tool: create_zip_archive
+  decision: allow
