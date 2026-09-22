@@ -5,7 +5,7 @@
   "actauth": "actauth/rules.yml",
   "env": [
     { "name": "ARCHIVE_OUTPUT_DIR", "description": "Where zip archives are written when ARCHIVE_STORAGE=local (the default). Defaults to ./generated/archives if unset.", "secret": false },
-    { "name": "ARCHIVE_STORAGE", "description": "Where the finished zip is saved: \"local\" (default) or \"gcs\" (a Google Cloud Storage bucket).", "secret": false },
+    { "name": "ARCHIVE_STORAGE", "description": "Where the finished zip is saved: \"local\" (default) or \"gcs\" (a Google Cloud Storage bucket).", "secret": false, "options": ["local", "gcs"] },
     { "name": "ARCHIVE_GCS_BUCKET", "description": "GCS bucket name to upload the zip to — required when ARCHIVE_STORAGE=gcs. Auth is via Application Default Credentials / GOOGLE_APPLICATION_CREDENTIALS, same as any other Google Cloud client.", "secret": false },
     { "name": "ARCHIVE_GCS_PREFIX", "description": "Optional object name prefix inside the GCS bucket (e.g. \"campaigns/summer/\"). Only used when ARCHIVE_STORAGE=gcs.", "secret": false },
     { "name": "ARCHIVE_GCS_SIGNED_URL_EXPIRY", "description": "How long (in seconds) the zip's signed GCS URL stays valid. Defaults to 604800 (7 days, the GCS-imposed maximum for V4 signed URLs) if unset. Falls back to a bare gs:// URI if the configured credentials can't sign one.", "secret": false }
