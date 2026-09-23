@@ -51,7 +51,11 @@ through many separate files or links.
     Falls back to a bare `gs://bucket/object` URI if the configured
     credentials can't sign one (plain user Application Default
     Credentials can't; a service account key can) — the upload itself
-    still succeeds either way. Requires
+    still succeeds either way. If ADC alone can't sign, set
+    `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the entire contents of a
+    downloaded service-account key file — the one setup path that needs
+    nothing but the GCP Console and the Admin UI's Environment tab, no
+    shell/SSH access to wherever this is running required. Requires
     `npm install @google-cloud/storage` in your own project (lazily
     imported, so `local` users never need it).
 - **Skill** — `file-archiving`: when bundling into a zip is actually
