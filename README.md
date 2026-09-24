@@ -46,7 +46,13 @@ through many separate files or links.
 
   **Storage**, chosen once via `ARCHIVE_STORAGE` (default `local`):
   - `local` — writes the zip under `ARCHIVE_OUTPUT_DIR`; `archive_path`
-    is a real filesystem path.
+    is a short `/local-file?...` URL — loopengine core's own generic
+    file-serving route (requires loopengine >= 0.1.57), giving `local`
+    storage the same download-button treatment `gcs` gets below — as
+    long as `ARCHIVE_OUTPUT_DIR` resolves inside this deployment's own
+    project directory (true for its own relative-path default; an
+    absolute path elsewhere falls back to a bare filesystem path with
+    no URL, same as before this route existed).
   - `gcs` — uploads it to `ARCHIVE_GCS_BUCKET` (optionally under
     `ARCHIVE_GCS_PREFIX`); `archive_path` is a short
     `/storage-redirect?...` URL — loopengine core's own generic route

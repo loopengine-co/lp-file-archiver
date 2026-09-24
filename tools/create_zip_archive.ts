@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative } from 'node:path'
 import JSZip from 'jszip'
 import type { ToolDefinition } from 'loopengine'
 
@@ -38,11 +38,12 @@ function isBlockedHost(hostname: string): boolean {
 }
 
 // A source is either an http(s) URL (fetched), a local filesystem path
-// (read directly), or a /storage-redirect URL (looped back through this
-// same server — see fetchSource's own doc comment below) — deliberately
-// not gs:// or any other scheme: supporting that would mean this tool
-// also needing GCS read credentials/the @google-cloud/storage package
-// just to consume another ability's output, when that other ability can
+// (read directly), or a /storage-redirect or /local-file URL (both
+// looped back through this same server — see fetchSource's own doc
+// comment below) — deliberately not gs:// or any other scheme:
+// supporting that would mean this tool also needing GCS read
+// credentials/the @google-cloud/storage package just to consume
+// another ability's own GCS output, when that other ability can
 // usually just hand back a real fetchable URL instead (e.g.
 // lp-product-ad-images's own path/download_path). A bare gs:// URI
 // passed here fails clearly rather than silently trying and failing
@@ -67,7 +68,12 @@ async function fetchSource(source: string): Promise<Buffer> {
   // general "any relative path" one: a genuine local absolute path
   // could itself start with "/", just never with this exact literal
   // segment.
-  if (source.startsWith('/storage-redirect')) {
+  // /local-file (another ability's own AD_IMAGE_STORAGE=local/
+  // ARCHIVE_STORAGE=local result — loopengine core's generic
+  // file-serving route, adapters/http.ts's handleLocalFile) is relative
+  // the exact same way /storage-redirect is, for the exact same reason
+  // — same loopback fix applies unchanged.
+  if (source.startsWith('/storage-redirect') || source.startsWith('/local-file')) {
     const port = process.env.PORT || '8787'
     const auth = process.env.LOOPENGINE_ADMIN_AUTH
     const headers: Record<string, string> = {}
@@ -113,6 +119,18 @@ function sourceBasename(source: string): string {
     if (filename) return basename(filename) || 'file'
     const object = params.get('object')
     if (object) return basename(object) || 'file'
+    return 'file'
+  }
+  // /local-file's own "path" param is already the real relative
+  // filesystem path (see handleLocalFile's own doc comment in
+  // loopengine core) — no bucket/object split to do, just the same
+  // query-string-awareness /storage-redirect's own case above needs.
+  if (source.startsWith('/local-file')) {
+    const params = new URLSearchParams(source.split('?')[1] ?? '')
+    const filename = params.get('filename')
+    if (filename) return basename(filename) || 'file'
+    const path = params.get('path')
+    if (path) return basename(path) || 'file'
     return 'file'
   }
   try {
@@ -250,13 +268,31 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
   const filename = await uniqueArchiveFilename(args.filename, async (name) => existsSync(join(args.outputDir, name)))
   const outputPath = join(args.outputDir, filename)
   await writeFile(outputPath, args.buffer)
+
+  // Same /local-file route ARCHIVE_STORAGE=gcs's own /storage-redirect
+  // sits alongside — loopengine core's own generic file-serving route,
+  // giving local storage the same download-button treatment gcs
+  // already gets instead of a bare path nothing but direct server
+  // access can open. Only offered when outputPath actually resolves
+  // inside process.cwd(); ARCHIVE_OUTPUT_DIR pointed at an absolute
+  // path outside it falls back to the bare path exactly like before —
+  // see /local-file's own doc comment in loopengine core for why it
+  // can't tell "this ability's own configured output dir" from "an
+  // arbitrary path" any other way. Always disposition=attachment, same
+  // as the gcs branch above — a zip has no meaningful inline preview,
+  // so there's no separate view/download pair to offer the way images
+  // get.
+  const relativeToRoot = relative(process.cwd(), outputPath)
+  if (!isAbsolute(relativeToRoot) && !relativeToRoot.startsWith('..')) {
+    return `/local-file?path=${encodeURIComponent(relativeToRoot)}&disposition=attachment&filename=${encodeURIComponent(filename)}`
+  }
   return outputPath
 }
 
 export const createZipArchive: ToolDefinition = {
   name: 'create_zip_archive',
   description:
-    'Bundle a set of files into one zip archive — typically the output paths/URLs from a prior batch tool call (e.g. a set of generated images) that the operator wants as one downloadable artifact instead of many separate ones. Each entry in files is either an http(s) URL (fetched), a local filesystem path (read directly), or another loopengine ability\'s own /storage-redirect URL (e.g. lp-product-ad-images\' own path/download_path) — not gs:// or any other scheme. A source that fails (dead URL, missing file) is skipped and reported, not treated as a fatal error for the whole archive, unless every source fails. Runs synchronously and returns once the archive is written — no job/polling involved, since bundling files is fast compared to whatever generated them.',
+    'Bundle a set of files into one zip archive — typically the output paths/URLs from a prior batch tool call (e.g. a set of generated images) that the operator wants as one downloadable artifact instead of many separate ones. Each entry in files is either an http(s) URL (fetched), a local filesystem path (read directly), or another loopengine ability\'s own /storage-redirect or /local-file URL (e.g. lp-product-ad-images\' own path/download_path, for either AD_IMAGE_STORAGE setting) — not gs:// or any other scheme. A source that fails (dead URL, missing file) is skipped and reported, not treated as a fatal error for the whole archive, unless every source fails. Runs synchronously and returns once the archive is written — no job/polling involved, since bundling files is fast compared to whatever generated them.',
   input_schema: {
     type: 'object',
     properties: {

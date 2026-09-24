@@ -1,5 +1,5 @@
 {
-  "loopengineVersion": "^0.1.56",
+  "loopengineVersion": "^0.1.57",
   "tools": ["tools/create_zip_archive.ts"],
   "skills": ["skills/file-archiving"],
   "actauth": "actauth/rules.yml",
