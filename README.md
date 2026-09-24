@@ -12,7 +12,7 @@ through many separate files or links.
 - **Tool** — `create_zip_archive(files, archive_name?)`. `files` is an
   array where each entry is either an `http(s)` URL (fetched), a local
   filesystem path (read directly), or another loopengine ability's own
-  `/gcs-redirect` URL (looped back through this same server, with the
+  `/storage-redirect` URL (looped back through this same server, with the
   same `LOOPENGINE_ADMIN_AUTH` credentials a browser session would
   already have cached — see
   [lp-product-ad-images](https://github.com/loopengine-co/lp-product-ad-images)'s
@@ -49,7 +49,7 @@ through many separate files or links.
     is a real filesystem path.
   - `gcs` — uploads it to `ARCHIVE_GCS_BUCKET` (optionally under
     `ARCHIVE_GCS_PREFIX`); `archive_path` is a short
-    `/gcs-redirect?...` URL — loopengine core's own generic route
+    `/storage-redirect?...` URL — loopengine core's own generic route
     (requires loopengine >= 0.1.55), which signs a fresh, short-lived V4
     URL and redirects on every click, rather than this tool signing one
     long-lived URL itself at generation time. Only openable from a
@@ -62,7 +62,7 @@ through many separate files or links.
     contents of a downloaded service-account key file — the one setup
     path that needs nothing but the GCP Console and the Admin UI's
     Environment tab, no shell/SSH access to wherever this is running
-    required; a click just 502s otherwise, since `/gcs-redirect` has no
+    required; a click just 502s otherwise, since `/storage-redirect` has no
     fallback for that the way this tool's own upload step does. Requires
     `npm install @google-cloud/storage` in your own project (lazily
     imported by both this tool's own upload step and loopengine core's

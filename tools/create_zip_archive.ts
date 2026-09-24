@@ -38,7 +38,7 @@ function isBlockedHost(hostname: string): boolean {
 }
 
 // A source is either an http(s) URL (fetched), a local filesystem path
-// (read directly), or a /gcs-redirect URL (looped back through this
+// (read directly), or a /storage-redirect URL (looped back through this
 // same server — see fetchSource's own doc comment below) — deliberately
 // not gs:// or any other scheme: supporting that would mean this tool
 // also needing GCS read credentials/the @google-cloud/storage package
@@ -48,9 +48,9 @@ function isBlockedHost(hostname: string): boolean {
 // passed here fails clearly rather than silently trying and failing
 // deep inside some other client.
 async function fetchSource(source: string): Promise<Buffer> {
-  // A /gcs-redirect URL (see lp-product-ad-images' own saveImage doc
+  // A /storage-redirect URL (see lp-product-ad-images' own saveImage doc
   // comment — loopengine core's generic redirect-and-sign route,
-  // adapters/http.ts's handleGcsRedirect) is relative, not a standalone
+  // adapters/http.ts's handleStorageRedirect) is relative, not a standalone
   // absolute URL: correct for a browser, which resolves it against
   // whatever origin the page is loaded from, but this tool runs
   // server-side with no such context — and no way to know this server's
@@ -67,7 +67,7 @@ async function fetchSource(source: string): Promise<Buffer> {
   // general "any relative path" one: a genuine local absolute path
   // could itself start with "/", just never with this exact literal
   // segment.
-  if (source.startsWith('/gcs-redirect')) {
+  if (source.startsWith('/storage-redirect')) {
     const port = process.env.PORT || '8787'
     const auth = process.env.LOOPENGINE_ADMIN_AUTH
     const headers: Record<string, string> = {}
@@ -100,14 +100,14 @@ async function fetchSource(source: string): Promise<Buffer> {
 }
 
 function sourceBasename(source: string): string {
-  // A /gcs-redirect URL's own real filename lives inside its query
+  // A /storage-redirect URL's own real filename lives inside its query
   // string (the "filename" param, for a disposition=attachment /
   // download_path URL, or the tail of "object" otherwise) — basename()
   // has no notion of query strings at all and would otherwise return
-  // "gcs-redirect?bucket=...&object=..." verbatim, literal "?"/"&"/"="
+  // "storage-redirect?provider=gcs&bucket=...&object=..." verbatim, literal "?"/"&"/"="
   // included, as this whole function's own fallback branch below
   // confirmed live before this case was added.
-  if (source.startsWith('/gcs-redirect')) {
+  if (source.startsWith('/storage-redirect')) {
     const params = new URLSearchParams(source.split('?')[1] ?? '')
     const filename = params.get('filename')
     if (filename) return basename(filename) || 'file'
@@ -208,8 +208,8 @@ function validateStorageConfig(): void {
 
 // Saves the finished zip and returns where it landed — a local
 // filesystem path by default, or (ARCHIVE_STORAGE=gcs) a short
-// /gcs-redirect?bucket=...&object=... URL, loopengine core's own
-// generic route (adapters/http.ts's handleGcsRedirect — requires
+// /storage-redirect?provider=gcs&bucket=...&object=... URL, loopengine core's own
+// generic route (adapters/http.ts's handleStorageRedirect — requires
 // loopengine >= 0.1.55, this ability's own loopengineVersion floor),
 // which signs a fresh URL on every click instead of this tool signing
 // one itself at generation time. Same design as lp-product-ad-images'
@@ -244,7 +244,7 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
     const file = bucket.file(objectName)
     await file.save(args.buffer, { contentType: 'application/zip' })
 
-    return `/gcs-redirect?bucket=${encodeURIComponent(bucketName)}&object=${encodeURIComponent(objectName)}&disposition=attachment&filename=${encodeURIComponent(filename)}`
+    return `/storage-redirect?provider=gcs&bucket=${encodeURIComponent(bucketName)}&object=${encodeURIComponent(objectName)}&disposition=attachment&filename=${encodeURIComponent(filename)}`
   }
   await mkdir(args.outputDir, { recursive: true })
   const filename = await uniqueArchiveFilename(args.filename, async (name) => existsSync(join(args.outputDir, name)))
@@ -256,7 +256,7 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
 export const createZipArchive: ToolDefinition = {
   name: 'create_zip_archive',
   description:
-    'Bundle a set of files into one zip archive — typically the output paths/URLs from a prior batch tool call (e.g. a set of generated images) that the operator wants as one downloadable artifact instead of many separate ones. Each entry in files is either an http(s) URL (fetched), a local filesystem path (read directly), or another loopengine ability\'s own /gcs-redirect URL (e.g. lp-product-ad-images\' own path/download_path) — not gs:// or any other scheme. A source that fails (dead URL, missing file) is skipped and reported, not treated as a fatal error for the whole archive, unless every source fails. Runs synchronously and returns once the archive is written — no job/polling involved, since bundling files is fast compared to whatever generated them.',
+    'Bundle a set of files into one zip archive — typically the output paths/URLs from a prior batch tool call (e.g. a set of generated images) that the operator wants as one downloadable artifact instead of many separate ones. Each entry in files is either an http(s) URL (fetched), a local filesystem path (read directly), or another loopengine ability\'s own /storage-redirect URL (e.g. lp-product-ad-images\' own path/download_path) — not gs:// or any other scheme. A source that fails (dead URL, missing file) is skipped and reported, not treated as a fatal error for the whole archive, unless every source fails. Runs synchronously and returns once the archive is written — no job/polling involved, since bundling files is fast compared to whatever generated them.',
   input_schema: {
     type: 'object',
     properties: {

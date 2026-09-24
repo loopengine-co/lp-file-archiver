@@ -6,7 +6,7 @@ description: When to bundle a batch of files into one zip with create_zip_archiv
 # File archiving
 
 `create_zip_archive` bundles a list of files — each an http(s) URL, a
-local filesystem path, or another ability's own `/gcs-redirect` URL —
+local filesystem path, or another ability's own `/storage-redirect` URL —
 into one zip. It's built to compose with whatever already produced
 those files, not just one specific ability: the common case is a batch
 tool that just finished (e.g. an image-generation job) handing over its
@@ -26,7 +26,7 @@ available.
 ## What counts as a valid source
 
 `http://`/`https://` URLs, local filesystem paths, and another
-loopengine ability's own `/gcs-redirect` URL (e.g.
+loopengine ability's own `/storage-redirect` URL (e.g.
 lp-product-ad-images' own `path`/`download_path`) — looped back through
 this same server rather than fetched externally, so it works
 regardless of what's actually in front of this deployment. A bare
@@ -57,12 +57,12 @@ but not the multi-minute scale a generation job can take.
 
 `archive_path` in the response is where it actually landed — a local
 filesystem path by default, or (when the deployment has
-`ARCHIVE_STORAGE=gcs` set) a short `/gcs-redirect` URL, relative to
+`ARCHIVE_STORAGE=gcs` set) a short `/storage-redirect` URL, relative to
 this same loopengine server, that resolves to the actual zip when
 opened from a browser already logged into it. Report it as-is — don't
 retype or reformat any part of it.
 
-That relative `/gcs-redirect?bucket=...` value is the whole, complete,
+That relative `/storage-redirect?provider=gcs&bucket=...` value is the whole, complete,
 correct URL — no `https://` scheme or host — not a shorthand or
 placeholder standing in for a "real" one. Don't "complete" it into
 `https://<bucket>.storage.googleapis.com/<object>` or
