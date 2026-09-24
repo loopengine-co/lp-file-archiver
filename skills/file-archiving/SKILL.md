@@ -61,3 +61,13 @@ filesystem path by default, or (when the deployment has
 this same loopengine server, that resolves to the actual zip when
 opened from a browser already logged into it. Report it as-is — don't
 retype or reformat any part of it.
+
+That relative `/gcs-redirect?bucket=...` value is the whole, complete,
+correct URL — no `https://` scheme or host — not a shorthand or
+placeholder standing in for a "real" one. Don't "complete" it into
+`https://<bucket>.storage.googleapis.com/<object>` or
+`https://storage.googleapis.com/<bucket>/<object>` just because that
+shape looks more familiar or finished than a bare relative path.
+Confirmed live: doing that produces a URL that was never signed at
+all, and `AccessDenied`s — a silent failure the reply itself gives no
+hint of, since the text looks like a normal, working link either way.
