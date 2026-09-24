@@ -37,15 +37,46 @@ function isBlockedHost(hostname: string): boolean {
   return false
 }
 
-// A source is either an http(s) URL (fetched) or a local filesystem
-// path (read directly) — deliberately not gs:// or any other scheme:
-// supporting that would mean this tool also needing GCS read
-// credentials/the @google-cloud/storage package just to consume another
-// ability's output, when that other ability can usually just hand back
-// a real https:// URL instead (e.g. lp-product-ad-images's own signed
-// GCS URLs). A bare gs:// URI passed here fails clearly rather than
-// silently trying and failing deep inside some other client.
+// A source is either an http(s) URL (fetched), a local filesystem path
+// (read directly), or a /gcs-redirect URL (looped back through this
+// same server — see fetchSource's own doc comment below) — deliberately
+// not gs:// or any other scheme: supporting that would mean this tool
+// also needing GCS read credentials/the @google-cloud/storage package
+// just to consume another ability's output, when that other ability can
+// usually just hand back a real fetchable URL instead (e.g.
+// lp-product-ad-images's own path/download_path). A bare gs:// URI
+// passed here fails clearly rather than silently trying and failing
+// deep inside some other client.
 async function fetchSource(source: string): Promise<Buffer> {
+  // A /gcs-redirect URL (see lp-product-ad-images' own saveImage doc
+  // comment — loopengine core's generic redirect-and-sign route,
+  // adapters/http.ts's handleGcsRedirect) is relative, not a standalone
+  // absolute URL: correct for a browser, which resolves it against
+  // whatever origin the page is loaded from, but this tool runs
+  // server-side with no such context — and no way to know this server's
+  // own public address, which can differ entirely from its internal one
+  // behind a load balancer (confirmed live against a real deployment).
+  // localhost:$PORT is the one address that's always right here,
+  // specifically because this tool runs inside the exact same process
+  // that's also running that same server on that same port — a
+  // loopback call to itself, nothing external about it. Carries
+  // LOOPENGINE_ADMIN_AUTH the same way a browser's own cached Basic
+  // Auth credentials would, since this call has no browser session to
+  // inherit one from — that route sits behind the same auth gate every
+  // other route on that server already requires. A prefix check, not a
+  // general "any relative path" one: a genuine local absolute path
+  // could itself start with "/", just never with this exact literal
+  // segment.
+  if (source.startsWith('/gcs-redirect')) {
+    const port = process.env.PORT || '8787'
+    const auth = process.env.LOOPENGINE_ADMIN_AUTH
+    const headers: Record<string, string> = {}
+    if (auth) headers.authorization = `Basic ${Buffer.from(auth).toString('base64')}`
+    const res = await fetch(`http://localhost:${port}${source}`, { headers })
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${source} via loopback`)
+    return Buffer.from(await res.arrayBuffer())
+  }
+
   let url: URL | undefined
   try {
     url = new URL(source)
@@ -69,6 +100,21 @@ async function fetchSource(source: string): Promise<Buffer> {
 }
 
 function sourceBasename(source: string): string {
+  // A /gcs-redirect URL's own real filename lives inside its query
+  // string (the "filename" param, for a disposition=attachment /
+  // download_path URL, or the tail of "object" otherwise) — basename()
+  // has no notion of query strings at all and would otherwise return
+  // "gcs-redirect?bucket=...&object=..." verbatim, literal "?"/"&"/"="
+  // included, as this whole function's own fallback branch below
+  // confirmed live before this case was added.
+  if (source.startsWith('/gcs-redirect')) {
+    const params = new URLSearchParams(source.split('?')[1] ?? '')
+    const filename = params.get('filename')
+    if (filename) return basename(filename) || 'file'
+    const object = params.get('object')
+    if (object) return basename(object) || 'file'
+    return 'file'
+  }
   try {
     const url = new URL(source)
     return basename(url.pathname) || 'file'
@@ -161,12 +207,19 @@ function validateStorageConfig(): void {
 }
 
 // Saves the finished zip and returns where it landed — a local
-// filesystem path by default, or (ARCHIVE_STORAGE=gcs) a signed HTTPS
-// URL, falling back to a bare gs://bucket/object URI if the configured
-// credentials can't sign one. Same design as lp-product-ad-images'
+// filesystem path by default, or (ARCHIVE_STORAGE=gcs) a short
+// /gcs-redirect?bucket=...&object=... URL, loopengine core's own
+// generic route (adapters/http.ts's handleGcsRedirect — requires
+// loopengine >= 0.1.55, this ability's own loopengineVersion floor),
+// which signs a fresh URL on every click instead of this tool signing
+// one itself at generation time. Same design as lp-product-ad-images'
 // saveImage — see that function's own doc comment for the full
-// reasoning (lazy import, signing fallback); duplicated here rather
-// than shared since abilities can't import each other's code.
+// reasoning (why a bucket+object reference beats a raw signed URL: an
+// agent reporting archive_path back to the operator has to reproduce it
+// character-for-character, and a long opaque Signature is exactly the
+// kind of thing that gets mistranscribed one character at a time — see
+// loopengine's own core/known-urls.ts); duplicated here rather than
+// shared since abilities can't import each other's code.
 async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<string> {
   const storage = process.env.ARCHIVE_STORAGE || 'local'
   if (storage === 'gcs') {
@@ -191,14 +244,7 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
     const file = bucket.file(objectName)
     await file.save(args.buffer, { contentType: 'application/zip' })
 
-    try {
-      const expirySecondsRaw = Number(process.env.ARCHIVE_GCS_SIGNED_URL_EXPIRY || '604800')
-      const expirySeconds = Number.isFinite(expirySecondsRaw) && expirySecondsRaw > 0 ? expirySecondsRaw : 604800
-      const [signedUrl] = await file.getSignedUrl({ action: 'read', expires: Date.now() + expirySeconds * 1000 })
-      return signedUrl
-    } catch {
-      return `gs://${bucketName}/${objectName}`
-    }
+    return `/gcs-redirect?bucket=${encodeURIComponent(bucketName)}&object=${encodeURIComponent(objectName)}&disposition=attachment&filename=${encodeURIComponent(filename)}`
   }
   await mkdir(args.outputDir, { recursive: true })
   const filename = await uniqueArchiveFilename(args.filename, async (name) => existsSync(join(args.outputDir, name)))
@@ -210,7 +256,7 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
 export const createZipArchive: ToolDefinition = {
   name: 'create_zip_archive',
   description:
-    'Bundle a set of files into one zip archive — typically the output paths/URLs from a prior batch tool call (e.g. a set of generated images) that the operator wants as one downloadable artifact instead of many separate ones. Each entry in files is either an http(s) URL (fetched) or a local filesystem path (read directly) — not gs:// or any other scheme; if a source is a signed GCS URL that already works fine here. A source that fails (dead URL, missing file) is skipped and reported, not treated as a fatal error for the whole archive, unless every source fails. Runs synchronously and returns once the archive is written — no job/polling involved, since bundling files is fast compared to whatever generated them.',
+    'Bundle a set of files into one zip archive — typically the output paths/URLs from a prior batch tool call (e.g. a set of generated images) that the operator wants as one downloadable artifact instead of many separate ones. Each entry in files is either an http(s) URL (fetched), a local filesystem path (read directly), or another loopengine ability\'s own /gcs-redirect URL (e.g. lp-product-ad-images\' own path/download_path) — not gs:// or any other scheme. A source that fails (dead URL, missing file) is skipped and reported, not treated as a fatal error for the whole archive, unless every source fails. Runs synchronously and returns once the archive is written — no job/polling involved, since bundling files is fast compared to whatever generated them.',
   input_schema: {
     type: 'object',
     properties: {

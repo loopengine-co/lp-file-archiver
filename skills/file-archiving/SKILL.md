@@ -5,13 +5,13 @@ description: When to bundle a batch of files into one zip with create_zip_archiv
 
 # File archiving
 
-`create_zip_archive` bundles a list of files — each an http(s) URL or a
-local filesystem path — into one zip. It's built to compose with whatever
-already produced those files, not just one specific ability: the common
-case is a batch tool that just finished (e.g. an image-generation job)
-handing over its own output paths/URLs so the operator gets one
-downloadable artifact instead of picking through dozens of separate
-files or links.
+`create_zip_archive` bundles a list of files — each an http(s) URL, a
+local filesystem path, or another ability's own `/gcs-redirect` URL —
+into one zip. It's built to compose with whatever already produced
+those files, not just one specific ability: the common case is a batch
+tool that just finished (e.g. an image-generation job) handing over its
+own output paths/URLs so the operator gets one downloadable artifact
+instead of picking through dozens of separate files or links.
 
 ## When to use it
 
@@ -25,13 +25,15 @@ available.
 
 ## What counts as a valid source
 
-Only `http://`/`https://` URLs and local filesystem paths — nothing
-else. A `gs://bucket/object` URI (the fallback form some GCS-backed
-tools return when their credentials can't sign a URL) is **not**
-supported here and will fail for that one entry; if the batch that
-produced it can hand back a real signed URL instead, use that. Don't
-pass in URLs a source didn't actually give you — this fetches whatever
-string you provide, so cite real output paths/URLs, not guesses.
+`http://`/`https://` URLs, local filesystem paths, and another
+loopengine ability's own `/gcs-redirect` URL (e.g.
+lp-product-ad-images' own `path`/`download_path`) — looped back through
+this same server rather than fetched externally, so it works
+regardless of what's actually in front of this deployment. A bare
+`gs://bucket/object` URI is **not** supported and will fail for that
+one entry. Don't pass in URLs a source didn't actually give you — this
+fetches whatever string you provide, so cite real output paths/URLs,
+not guesses.
 
 ## Partial results are normal, not a failure
 
@@ -55,7 +57,7 @@ but not the multi-minute scale a generation job can take.
 
 `archive_path` in the response is where it actually landed — a local
 filesystem path by default, or (when the deployment has
-`ARCHIVE_STORAGE=gcs` set) a signed HTTPS URL, falling back to a bare
-`gs://bucket/object` URI if the configured credentials can't sign one —
-same signing-capability caveat as any GCS-backed tool: plain user
-Application Default Credentials can't sign, a service account key can.
+`ARCHIVE_STORAGE=gcs` set) a short `/gcs-redirect` URL, relative to
+this same loopengine server, that resolves to the actual zip when
+opened from a browser already logged into it. Report it as-is — don't
+retype or reformat any part of it.
