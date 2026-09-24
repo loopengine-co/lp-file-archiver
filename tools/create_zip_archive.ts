@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import JSZip from 'jszip'
@@ -97,6 +98,30 @@ function uniqueEntryName(name: string, used: Set<string>): string {
   return candidate
 }
 
+// Same disambiguation as uniqueEntryName above, one level up — the
+// archive's own output filename, not an entry inside it. Only matters
+// when archive_name was given explicitly: the omitted-name default
+// already bakes in Date.now() and can't collide with a prior call.  A
+// model-chosen name can be generic enough to repeat across genuinely
+// different batches (e.g. "google-ads-landscape-images" for any
+// landscape-ratio run) — without this, a second call with the same name
+// would silently overwrite the first archive, locally or in GCS alike,
+// with zero warning. `exists` is async since the GCS case needs a real
+// API call to check; the local case just wraps existsSync.
+async function uniqueArchiveFilename(filename: string, exists: (name: string) => Promise<boolean>): Promise<string> {
+  if (!(await exists(filename))) return filename
+  const dot = filename.lastIndexOf('.')
+  const stem = dot > 0 ? filename.slice(0, dot) : filename
+  const ext = dot > 0 ? filename.slice(dot) : ''
+  let i = 2
+  let candidate = `${stem}-${i}${ext}`
+  while (await exists(candidate)) {
+    i++
+    candidate = `${stem}-${i}${ext}`
+  }
+  return candidate
+}
+
 // Builds the Storage client — Application Default Credentials (a real
 // key file via GOOGLE_APPLICATION_CREDENTIALS, gcloud user credentials,
 // or the GCE/Cloud Run metadata server) by default, needing zero setup
@@ -146,7 +171,7 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
   const storage = process.env.ARCHIVE_STORAGE || 'local'
   if (storage === 'gcs') {
     const bucketName = process.env.ARCHIVE_GCS_BUCKET as string // validateStorageConfig already required this
-    const objectName = `${process.env.ARCHIVE_GCS_PREFIX || ''}${args.filename}`
+    const prefix = process.env.ARCHIVE_GCS_PREFIX || ''
     const gcsModuleName = '@google-cloud/storage' // see saveImage's own comment on why this is a variable, not a literal
     let gcs: any
     try {
@@ -157,7 +182,13 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
       )
     }
     const client = buildGcsStorageClient(gcs)
-    const file = client.bucket(bucketName).file(objectName)
+    const bucket = client.bucket(bucketName)
+    const filename = await uniqueArchiveFilename(args.filename, async (name) => {
+      const [exists] = await bucket.file(`${prefix}${name}`).exists()
+      return exists
+    })
+    const objectName = `${prefix}${filename}`
+    const file = bucket.file(objectName)
     await file.save(args.buffer, { contentType: 'application/zip' })
 
     try {
@@ -170,7 +201,8 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
     }
   }
   await mkdir(args.outputDir, { recursive: true })
-  const outputPath = join(args.outputDir, args.filename)
+  const filename = await uniqueArchiveFilename(args.filename, async (name) => existsSync(join(args.outputDir, name)))
+  const outputPath = join(args.outputDir, filename)
   await writeFile(outputPath, args.buffer)
   return outputPath
 }
@@ -229,7 +261,8 @@ export const createZipArchive: ToolDefinition = {
 
     return JSON.stringify({ archive_path: archivePath, file_count: included.length, total_bytes: zipBuffer.length, results })
   },
-  // Writes only its own uniquely-named archive file, reads nothing
-  // shared, no risk of two calls conflicting.
+  // Writes only its own uniquely-named archive file (uniqueArchiveFilename
+  // disambiguates on an actual name collision, not just the omitted-name
+  // default), reads nothing shared, no risk of two calls conflicting.
   safe: true,
 }

@@ -1,6 +1,6 @@
 {
   "name": "lp-file-archiver",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "A loopengine ability: a create_zip_archive tool that bundles local files and/or http(s) URLs into one zip archive, saved locally or to GCS with a real signed URL, plus a skill on when to use it.",
   "license": "MIT",
   "keywords": ["loopengine", "loopengine-ability", "zip", "archive", "file-bundling", "gcs"],
