@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import JSZip from 'jszip'
-import type { ToolDefinition } from 'loopengine'
+import type { AgentEnv, ToolDefinition } from 'loopengine'
 
 interface EntryResult {
   source: string
@@ -196,8 +196,8 @@ async function uniqueArchiveFilename(filename: string, exists: (name: string) =>
 // file onto wherever this is actually running (no SSH, no shell). Same
 // design as saveImage's own buildGcsStorageClient — duplicated here
 // rather than shared since abilities can't import each other's code.
-function buildGcsStorageClient(gcs: any): any {
-  const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+function buildGcsStorageClient(env: AgentEnv, gcs: any): any {
+  const credentialsJson = env.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
   if (!credentialsJson) return new gcs.Storage()
   let credentials: { project_id?: string }
   try {
@@ -214,12 +214,12 @@ function buildGcsStorageClient(gcs: any): any {
 // unlike lp-product-ad-images' job-based tools) always stay local
 // regardless of ARCHIVE_STORAGE; this validates the storage config the
 // same way that ability does, ahead of doing any real work.
-function validateStorageConfig(): void {
-  const storage = process.env.ARCHIVE_STORAGE || 'local'
+function validateStorageConfig(env: AgentEnv): void {
+  const storage = env.get('ARCHIVE_STORAGE') || 'local'
   if (storage !== 'local' && storage !== 'gcs') {
     throw new Error(`create_zip_archive: ARCHIVE_STORAGE must be "local" or "gcs" — got "${storage}"`)
   }
-  if (storage === 'gcs' && !process.env.ARCHIVE_GCS_BUCKET) {
+  if (storage === 'gcs' && !env.get('ARCHIVE_GCS_BUCKET')) {
     throw new Error('create_zip_archive: ARCHIVE_GCS_BUCKET is not set (required when ARCHIVE_STORAGE=gcs)')
   }
 }
@@ -238,11 +238,11 @@ function validateStorageConfig(): void {
 // kind of thing that gets mistranscribed one character at a time — see
 // loopengine's own core/known-urls.ts); duplicated here rather than
 // shared since abilities can't import each other's code.
-async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<string> {
-  const storage = process.env.ARCHIVE_STORAGE || 'local'
+async function saveArchive(env: AgentEnv, args: { buffer: Buffer; filename: string; outputDir: string }): Promise<string> {
+  const storage = env.get('ARCHIVE_STORAGE') || 'local'
   if (storage === 'gcs') {
-    const bucketName = process.env.ARCHIVE_GCS_BUCKET as string // validateStorageConfig already required this
-    const prefix = process.env.ARCHIVE_GCS_PREFIX || ''
+    const bucketName = env.get('ARCHIVE_GCS_BUCKET') as string // validateStorageConfig already required this
+    const prefix = env.get('ARCHIVE_GCS_PREFIX') || ''
     const gcsModuleName = '@google-cloud/storage' // see saveImage's own comment on why this is a variable, not a literal
     let gcs: any
     try {
@@ -252,7 +252,7 @@ async function saveArchive(args: { buffer: Buffer; filename: string; outputDir: 
         'create_zip_archive: ARCHIVE_STORAGE=gcs requires the @google-cloud/storage package — npm install @google-cloud/storage in your own project.',
       )
     }
-    const client = buildGcsStorageClient(gcs)
+    const client = buildGcsStorageClient(env, gcs)
     const bucket = client.bucket(bucketName)
     const filename = await uniqueArchiveFilename(args.filename, async (name) => {
       const [exists] = await bucket.file(`${prefix}${name}`).exists()
@@ -309,8 +309,9 @@ export const createZipArchive: ToolDefinition = {
     },
     required: ['files'],
   },
-  execute: async (input) => {
-    validateStorageConfig()
+  execute: async (input, ctx) => {
+    const env = ctx.env
+    validateStorageConfig(env)
 
     const files = Array.isArray(input.files) ? input.files.map(String) : []
     if (files.length === 0) throw new Error('create_zip_archive: files must be a non-empty array')
@@ -337,9 +338,9 @@ export const createZipArchive: ToolDefinition = {
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
 
-    const outputDir = process.env.ARCHIVE_OUTPUT_DIR || './generated/archives'
+    const outputDir = env.get('ARCHIVE_OUTPUT_DIR') || './generated/archives'
     const baseName = typeof input.archive_name === 'string' && input.archive_name ? slugify(input.archive_name) : `archive-${Date.now()}`
-    const archivePath = await saveArchive({ buffer: zipBuffer, filename: `${baseName || 'archive'}.zip`, outputDir })
+    const archivePath = await saveArchive(env, { buffer: zipBuffer, filename: `${baseName || 'archive'}.zip`, outputDir })
 
     return JSON.stringify({ archive_path: archivePath, file_count: included.length, total_bytes: zipBuffer.length, results })
   },
